@@ -1,0 +1,150 @@
+# Legal Hearsay Detection Patterns
+# One pattern per line, # for comments
+# This file demonstrates loading patterns from a file
+
+# Basic hearsay indicators
+he said
+she said
+he told
+she told
+i heard
+they said
+someone said
+someone told
+according to
+reportedly
+allegedly
+it was reported
+sources say
+witnesses claim
+testimony indicates
+didn't you say
+you mentioned
+as stated by
+witness testified
+plaintiff claims
+defendant stated
+court records show
+evidence suggests
+
+# More complex hearsay patterns
+i was told that
+someone mentioned that
+it was rumored that
+word on the street is
+i heard through the grapevine
+a little bird told me
+the word is that
+people are saying
+there's talk that
+i've been told
+from what i understand
+as i understand it
+my understanding is
+i believe i heard
+if i recall correctly
+someone once told me
+i remember hearing
+it's been said that
+there are reports that
+it has been alleged
+it is claimed that
+sources indicate
+witnesses report
+testimony suggests
+evidence points to
+records indicate
+documents show
+files reveal
+investigation found
+inquiry determined
+
+# Legal-specific patterns
+counsel stated
+attorney argued
+legal brief indicates
+court filing shows
+deposition reveals
+affidavit states
+sworn statement indicates
+expert testimony suggests
+witness statement claims
+police report indicates
+incident report shows
+medical records indicate
+financial records show
+email correspondence reveals
+text messages show
+phone records indicate
+surveillance footage shows
+security camera captured
+audio recording reveals
+video evidence shows
+
+# Temporal hearsay indicators
+yesterday someone said
+last week i heard
+recently it was reported
+earlier today someone mentioned
+this morning i was told
+last night someone said
+a few days ago i heard
+some time ago someone told
+back then people said
+in the past it was claimed
+previously it was stated
+formerly it was alleged
+historically it was reported
+traditionally it was said
+conventionally it was believed
+
+# Conditional hearsay
+if what i heard is true
+assuming the reports are accurate
+provided the testimony is correct
+given what witnesses claim
+based on what i was told
+according to reliable sources
+if the allegations are true
+assuming the statements are accurate
+provided the claims are valid
+given the evidence presented
+based on witness accounts
+according to court documents
+if the reports are credible
+assuming the testimony is truthful
+provided the allegations hold
+
+# Indirect hearsay
+through the grapevine i heard
+word has it that
+rumor has it that
+scuttlebutt suggests
+gossip indicates
+hearsay suggests
+speculation is that
+conjecture points to
+supposition is that
+assumption is that
+presumption is that
+inference is that
+implication is that
+suggestion is that
+indication is that
+
+# Professional hearsay
+client informed me
+patient reported
+student mentioned
+employee stated
+colleague indicated
+supervisor said
+manager told
+director claimed
+executive alleged
+board member suggested
+committee reported
+panel concluded
+jury found
+judge stated
+magistrate indicated 
