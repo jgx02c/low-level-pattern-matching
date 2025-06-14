@@ -17,11 +17,26 @@ type MatchResult struct {
 	Text       string
 }
 
-// HybridMatcher provides both pure Go and optimized pattern matching
-type HybridMatcher struct {
-	patterns     []string
-	cache        *Cache
-	useOptimized bool
+// AhoCorasickMatcher provides DFA-based pattern matching in pure Go
+type AhoCorasickMatcher struct {
+	patterns    []string
+	cache       *Cache
+	automaton   *AhoCorasickAutomaton
+	initialized bool
+}
+
+// AhoCorasickAutomaton represents the DFA state machine
+type AhoCorasickAutomaton struct {
+	states       []ACState
+	stateCount   int
+	patternCount int
+}
+
+// ACState represents a single state in the automaton
+type ACState struct {
+	next    [256]int // Next state transitions
+	failure int      // Failure link
+	outputs []int    // Pattern IDs ending at this state
 }
 
 // Legal hearsay patterns for demo (fallback if no file provided)
@@ -48,11 +63,10 @@ var LegalPatterns = []string{
 	"evidence suggests",
 }
 
-// NewHybridMatcher creates a matcher that can use both Go and optimized implementations
-func NewHybridMatcher(patternsFile string, useOptimized bool) (*HybridMatcher, error) {
-	matcher := &HybridMatcher{
-		cache:        NewCache(10000), // Larger cache for high-performance scenarios
-		useOptimized: useOptimized,
+// NewAhoCorasickMatcher creates a new DFA-based pattern matcher
+func NewAhoCorasickMatcher(patternsFile string) (*AhoCorasickMatcher, error) {
+	matcher := &AhoCorasickMatcher{
+		cache: NewCache(10000), // Large cache for high-performance scenarios
 	}
 
 	// Load patterns from file or use defaults
@@ -64,13 +78,111 @@ func NewHybridMatcher(patternsFile string, useOptimized bool) (*HybridMatcher, e
 			matcher.patterns = LegalPatterns
 		} else {
 			matcher.patterns = patterns
-			fmt.Printf("📚 Loaded %d patterns from %s\n", len(patterns), patternsFile)
 		}
 	} else {
 		matcher.patterns = LegalPatterns
 	}
 
+	// Build the Aho-Corasick automaton
+	fmt.Println("🏗️  Building Aho-Corasick DFA...")
+	start := time.Now()
+
+	automaton, err := buildAhoCorasickAutomaton(matcher.patterns)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Aho-Corasick automaton: %v", err)
+	}
+
+	matcher.automaton = automaton
+	matcher.initialized = true
+
+	buildTime := time.Since(start)
+	fmt.Printf("✅ DFA built: %d states, %v\n", automaton.stateCount, buildTime)
+	fmt.Printf("✅ DFA-based matcher ready with %d patterns\n", len(matcher.patterns))
+
 	return matcher, nil
+}
+
+// buildAhoCorasickAutomaton constructs the DFA from patterns
+func buildAhoCorasickAutomaton(patterns []string) (*AhoCorasickAutomaton, error) {
+	ac := &AhoCorasickAutomaton{
+		states:       make([]ACState, 1), // Start with root state
+		stateCount:   1,
+		patternCount: len(patterns),
+	}
+
+	// Initialize root state
+	ac.states[0] = ACState{
+		failure: 0,
+		outputs: nil,
+	}
+
+	// Build goto function (trie construction)
+	for patternID, pattern := range patterns {
+		pattern = strings.ToLower(pattern) // Case-insensitive
+		state := 0                         // Start at root
+
+		for _, char := range pattern {
+			c := int(char)
+			if c >= 256 {
+				continue // Skip non-ASCII characters
+			}
+
+			if ac.states[state].next[c] == 0 {
+				// Create new state
+				ac.states = append(ac.states, ACState{
+					failure: 0,
+					outputs: nil,
+				})
+				ac.states[state].next[c] = ac.stateCount
+				ac.stateCount++
+			}
+
+			state = ac.states[state].next[c]
+		}
+
+		// Mark this state as accepting this pattern
+		ac.states[state].outputs = append(ac.states[state].outputs, patternID)
+	}
+
+	// Build failure function using BFS
+	queue := make([]int, 0, ac.stateCount)
+
+	// Initialize failure links for depth-1 states
+	for c := 0; c < 256; c++ {
+		state := ac.states[0].next[c]
+		if state != 0 {
+			ac.states[state].failure = 0
+			queue = append(queue, state)
+		}
+	}
+
+	// Build failure links for deeper states
+	for len(queue) > 0 {
+		r := queue[0]
+		queue = queue[1:]
+
+		for c := 0; c < 256; c++ {
+			u := ac.states[r].next[c]
+			if u == 0 {
+				continue
+			}
+
+			queue = append(queue, u)
+
+			state := ac.states[r].failure
+			for state != 0 && ac.states[state].next[c] == 0 {
+				state = ac.states[state].failure
+			}
+
+			ac.states[u].failure = ac.states[state].next[c]
+
+			// Copy outputs from failure state
+			failureState := ac.states[u].failure
+			ac.states[u].outputs = append(ac.states[u].outputs, ac.states[failureState].outputs...)
+		}
+	}
+
+	return ac, nil
 }
 
 // loadPatternsFromFile loads patterns from a text file (one per line)
@@ -105,29 +217,60 @@ func loadPatternsFromFile(filename string) ([]string, error) {
 	return patterns, nil
 }
 
-// Search performs pattern matching using the best available method
-func (m *HybridMatcher) Search(text string) ([]MatchResult, time.Duration, error) {
+// Search performs ultra-fast DFA-based pattern matching
+func (m *AhoCorasickMatcher) Search(text string) ([]MatchResult, time.Duration, error) {
+	if !m.initialized {
+		return nil, 0, fmt.Errorf("matcher not initialized")
+	}
+
 	// Check cache first
 	if results, duration, found := m.cache.Get(text); found {
 		return results, duration, nil
 	}
 
 	start := time.Now()
-	var results []MatchResult
-	var err error
 
-	// Use optimized implementation if available
-	if m.useOptimized {
-		results, err = m.searchOptimized(text)
-	} else {
-		results, err = m.searchPureGo(text)
+	// Convert to lowercase for case-insensitive matching
+	lowerText := strings.ToLower(text)
+
+	var results []MatchResult
+	state := 0
+
+	// Scan through text using the automaton
+	for i, char := range lowerText {
+		c := int(char)
+		if c >= 256 {
+			continue // Skip non-ASCII characters
+		}
+
+		// Follow failure links until we find a transition
+		for state != 0 && m.automaton.states[state].next[c] == 0 {
+			state = m.automaton.states[state].failure
+		}
+
+		state = m.automaton.states[state].next[c]
+
+		// Check for matches at this state
+		for _, patternID := range m.automaton.states[state].outputs {
+			if patternID < len(m.patterns) {
+				pattern := m.patterns[patternID]
+				patternLen := len(pattern)
+				offset := i - patternLen + 1
+
+				if offset >= 0 && offset+patternLen <= len(text) {
+					results = append(results, MatchResult{
+						Offset:     uint64(offset),
+						Length:     uint64(patternLen),
+						PatternID:  uint32(patternID),
+						Confidence: 95,
+						Text:       text[offset : offset+patternLen],
+					})
+				}
+			}
+		}
 	}
 
 	elapsed := time.Since(start)
-
-	if err != nil {
-		return nil, elapsed, err
-	}
 
 	// Cache the results
 	m.cache.Put(text, results, elapsed)
@@ -135,50 +278,8 @@ func (m *HybridMatcher) Search(text string) ([]MatchResult, time.Duration, error
 	return results, elapsed, nil
 }
 
-// searchOptimized uses optimized pattern matching (placeholder for future SIMD implementation)
-func (m *HybridMatcher) searchOptimized(text string) ([]MatchResult, error) {
-	// For now, fall back to pure Go implementation
-	// TODO: Add SIMD/optimized implementation for both x86-64 and ARM64
-	return m.searchPureGo(text)
-}
-
-// searchPureGo uses pure Go implementation for pattern matching
-func (m *HybridMatcher) searchPureGo(text string) ([]MatchResult, error) {
-	var results []MatchResult
-
-	// Convert to lowercase for case-insensitive matching
-	lowerText := strings.ToLower(text)
-
-	// Search for each pattern
-	for patternID, pattern := range m.patterns {
-		lowerPattern := strings.ToLower(pattern)
-
-		// Find all occurrences of this pattern
-		offset := 0
-		for {
-			index := strings.Index(lowerText[offset:], lowerPattern)
-			if index == -1 {
-				break
-			}
-
-			actualOffset := offset + index
-			results = append(results, MatchResult{
-				Offset:     uint64(actualOffset),
-				Length:     uint64(len(pattern)),
-				PatternID:  uint32(patternID),
-				Confidence: 95, // Fixed confidence for demo
-				Text:       text[actualOffset : actualOffset+len(pattern)],
-			})
-
-			offset = actualOffset + 1 // Move past this match
-		}
-	}
-
-	return results, nil
-}
-
 // GetPatternName returns the pattern name for an ID
-func (m *HybridMatcher) GetPatternName(patternID uint32) string {
+func (m *AhoCorasickMatcher) GetPatternName(patternID uint32) string {
 	if int(patternID) < len(m.patterns) {
 		return m.patterns[patternID]
 	}
@@ -186,12 +287,26 @@ func (m *HybridMatcher) GetPatternName(patternID uint32) string {
 }
 
 // GetCacheStats returns cache performance statistics
-func (m *HybridMatcher) GetCacheStats() CacheStats {
+func (m *AhoCorasickMatcher) GetCacheStats() CacheStats {
 	return m.cache.GetStats()
 }
 
+// GetAhoCorasickStats returns Aho-Corasick performance statistics
+func (m *AhoCorasickMatcher) GetAhoCorasickStats() map[string]interface{} {
+	if !m.initialized {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"state_count":    m.automaton.stateCount,
+		"pattern_count":  m.automaton.patternCount,
+		"implementation": "Pure Go DFA",
+		"algorithm":      "Aho-Corasick",
+	}
+}
+
 // formatResults formats search results for display
-func formatResults(text string, results []MatchResult, duration time.Duration, matcher *HybridMatcher) {
+func formatResults(text string, results []MatchResult, duration time.Duration, matcher *AhoCorasickMatcher) {
 	if len(results) == 0 {
 		fmt.Printf("✅ No hearsay detected (%v)\n", duration)
 		return
@@ -221,8 +336,9 @@ func formatResults(text string, results []MatchResult, duration time.Duration, m
 }
 
 // displayStats shows performance and cache statistics
-func displayStats(matcher *HybridMatcher, totalSearches, totalMatches int64, totalTime time.Duration) {
+func displayStats(matcher *AhoCorasickMatcher, totalSearches, totalMatches int64, totalTime time.Duration) {
 	cacheStats := matcher.GetCacheStats()
+	acStats := matcher.GetAhoCorasickStats()
 
 	fmt.Printf("\n📊 Performance Statistics:\n")
 	fmt.Printf("   Total Searches: %d\n", totalSearches)
@@ -238,11 +354,19 @@ func displayStats(matcher *HybridMatcher, totalSearches, totalMatches int64, tot
 	fmt.Printf("   Cache Misses: %d\n", cacheStats.Misses)
 	fmt.Printf("   Hit Ratio: %.1f%%\n", matcher.cache.HitRatio())
 	fmt.Printf("   Cached Entries: %d\n", cacheStats.TotalEntries)
+
+	if len(acStats) > 0 {
+		fmt.Printf("\n⚡ Aho-Corasick DFA Statistics:\n")
+		fmt.Printf("   Implementation: %v\n", acStats["implementation"])
+		fmt.Printf("   Algorithm: %v\n", acStats["algorithm"])
+		fmt.Printf("   States: %v\n", acStats["state_count"])
+		fmt.Printf("   Patterns: %v\n", acStats["pattern_count"])
+	}
 }
 
 // runBenchmark performs performance testing
-func runBenchmark(matcher *HybridMatcher) {
-	fmt.Println("🚀 Running performance benchmark...")
+func runBenchmark(matcher *AhoCorasickMatcher) {
+	fmt.Println("🚀 Running Aho-Corasick DFA benchmark...")
 
 	testTexts := []string{
 		"he said the defendant was guilty",
@@ -280,7 +404,7 @@ func runBenchmark(matcher *HybridMatcher) {
 	elapsed := time.Since(start)
 	totalSearches := iterations * len(testTexts)
 
-	fmt.Printf("\n🏁 Benchmark Results:\n")
+	fmt.Printf("\n🏁 Aho-Corasick DFA Benchmark Results:\n")
 	fmt.Printf("   Iterations: %d\n", iterations)
 	fmt.Printf("   Test Texts: %d\n", len(testTexts))
 	fmt.Printf("   Total Searches: %d\n", totalSearches)
@@ -293,11 +417,10 @@ func runBenchmark(matcher *HybridMatcher) {
 
 func main() {
 	fmt.Println("🏛️  Legal NLP Pipeline - Ultra-Fast Hearsay Detection")
-	fmt.Println("⚡ Hybrid Go + Optimized Implementation with Microsecond Response Times")
+	fmt.Println("⚡ Aho-Corasick DFA Implementation with Microsecond Response Times")
 
 	// Parse command line arguments
 	var patternsFile string
-	var useOptimized bool = true
 	var mode string = "interactive"
 
 	for i, arg := range os.Args[1:] {
@@ -306,8 +429,6 @@ func main() {
 			if i+1 < len(os.Args)-1 {
 				patternsFile = os.Args[i+2]
 			}
-		case "--no-optimized":
-			useOptimized = false
 		case "--benchmark", "-b":
 			mode = "benchmark"
 		case "--test", "-t":
@@ -317,26 +438,29 @@ func main() {
 			fmt.Println("  legal-nlp-simd [options]")
 			fmt.Println("\nOptions:")
 			fmt.Println("  --patterns, -p FILE    Load patterns from file")
-			fmt.Println("  --no-optimized         Disable optimizations")
 			fmt.Println("  --benchmark, -b        Run performance benchmark")
 			fmt.Println("  --test, -t             Run test cases")
 			fmt.Println("  --help, -h             Show this help")
 			fmt.Println("\nPattern File Format:")
 			fmt.Println("  One pattern per line, # for comments")
 			fmt.Println("  Example: patterns.txt with 1M legal patterns")
+			fmt.Println("\nFeatures:")
+			fmt.Println("  • Pre-compiled DFA (Aho-Corasick automaton)")
+			fmt.Println("  • Single-pass multi-pattern matching")
+			fmt.Println("  • Microsecond search times")
+			fmt.Println("  • Ready for SIMD optimization")
 			return
 		}
 	}
 
 	// Initialize matcher
-	matcher, err := NewHybridMatcher(patternsFile, useOptimized)
+	matcher, err := NewAhoCorasickMatcher(patternsFile)
 	if err != nil {
 		fmt.Printf("❌ Failed to initialize matcher: %v\n", err)
 		return
 	}
 
 	fmt.Printf("📚 Loaded %d legal hearsay patterns\n", len(matcher.patterns))
-	fmt.Printf("⚡ Optimizations: %s\n", map[bool]string{true: "ENABLED", false: "DISABLED"}[useOptimized])
 
 	// Performance tracking
 	var totalSearches, totalMatches int64
@@ -440,10 +564,6 @@ func main() {
 		if cacheStats.Hits > 0 {
 			cached = fmt.Sprintf(" | Cache: %.0f%% hit", matcher.cache.HitRatio())
 		}
-		optimizedInfo := ""
-		if useOptimized {
-			optimizedInfo = " | Optimized: ON"
-		}
-		fmt.Printf("📊 Searches: %d | Matches: %d%s%s\n\n", totalSearches, totalMatches, cached, optimizedInfo)
+		fmt.Printf("📊 Searches: %d | Matches: %d%s | DFA: ON\n\n", totalSearches, totalMatches, cached)
 	}
 }
