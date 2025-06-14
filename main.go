@@ -416,6 +416,14 @@ func runBenchmark(matcher *AhoCorasickMatcher) {
 }
 
 func main() {
+	// Check for SIMD mode first
+	for _, arg := range os.Args[1:] {
+		if arg == "--simd" {
+			mainSIMD()
+			return
+		}
+	}
+
 	fmt.Println("🏛️  Legal NLP Pipeline - Ultra-Fast Hearsay Detection")
 	fmt.Println("⚡ Aho-Corasick DFA Implementation with Microsecond Response Times")
 
@@ -433,22 +441,26 @@ func main() {
 			mode = "benchmark"
 		case "--test", "-t":
 			mode = "test"
+		case "--simd":
+			// Already handled above
 		case "--help", "-h":
 			fmt.Println("\nUsage:")
-			fmt.Println("  legal-nlp-simd [options]")
+			fmt.Println("  legal-nlp [options]")
 			fmt.Println("\nOptions:")
 			fmt.Println("  --patterns, -p FILE    Load patterns from file")
 			fmt.Println("  --benchmark, -b        Run performance benchmark")
 			fmt.Println("  --test, -t             Run test cases")
+			fmt.Println("  --simd                 Use SIMD-accelerated C core")
 			fmt.Println("  --help, -h             Show this help")
 			fmt.Println("\nPattern File Format:")
 			fmt.Println("  One pattern per line, # for comments")
 			fmt.Println("  Example: patterns.txt with 1M legal patterns")
 			fmt.Println("\nFeatures:")
-			fmt.Println("  • Pre-compiled DFA (Aho-Corasick automaton)")
+			fmt.Println("  • Pure Go: Pre-compiled DFA (Aho-Corasick automaton)")
+			fmt.Println("  • SIMD Mode: AVX-512/NEON accelerated C core")
 			fmt.Println("  • Single-pass multi-pattern matching")
-			fmt.Println("  • Microsecond search times")
-			fmt.Println("  • Ready for SIMD optimization")
+			fmt.Println("  • Microsecond/nanosecond search times")
+			fmt.Println("  • High-performance caching and statistics")
 			return
 		}
 	}
