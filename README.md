@@ -62,7 +62,4 @@ graph TD
 - [Aho-Corasick in C (GitHub)](https://github.com/ccbrown/aho-corasick)
 - [Go cgo Documentation](https://golang.org/cmd/cgo/)
 - [SIMD Intrinsics Guide (Intel)](https://software.intel.com/sites/landingpage/IntrinsicsGuide/)
-
----
-
-**This is a minimal, blazing-fast legal NLP demo. For SIMD/C/assembly integration or more advanced features, just ask!** 
+  
